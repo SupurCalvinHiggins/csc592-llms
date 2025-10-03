@@ -56,7 +56,7 @@ def main() -> None:
     )
     train_loader, val_loader = cycle(train_loader), cycle(val_loader)
 
-    opt = optim.Adam(model.parameters(), fused=True)
+    opt = optim.Adam(model.parameters(), lr=2e-4, fused=True)
     criteron = nn.CrossEntropyLoss()
 
     scaler = GradScaler()
