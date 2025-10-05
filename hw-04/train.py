@@ -24,13 +24,13 @@ def generate(
     temperature: float = 1.0,
 ) -> Tensor:
     seq_len = tokens.size(0) - 1
-    out = torch.zeros((1, seq_len + count + 1), dtype=torch.int, device=device)
-    out[:, : seq_len + 1] = tokens
+    out = torch.zeros((1, seq_len + count), dtype=torch.int, device=device)
+    out[:, : seq_len] = tokens[:seq_len]
     for i in range(count):
-        logits = model(out[:, -seq_len:])[:, -1, :]
+        logits = model(out[:, i:i+seq_len])[:, -1, :]
         probs = F.softmax(logits / temperature, dim=-1)
         token = torch.multinomial(probs, 1)
-        out[:, seq_len + i + 1] = token
+        out[:, seq_len + i] = token
     return out[0]
 
 
@@ -49,7 +49,7 @@ def main() -> None:
     model = Transformer(d_model=512).to(device)
     model.compile(mode="max-autotune")
 
-    batch_size = 12
+    batch_size = 24
     seq_len = 1024
     train_loader, val_loader = get_loaders(
         Path("../datasets/enwik8.gz"), seq_len, batch_size
