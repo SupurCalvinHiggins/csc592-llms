@@ -63,7 +63,7 @@ def main() -> None:
     model = torch.compile(model, mode="max-autotune")
 
     opt = Adam(model.parameters(), lr=3e-4)
-    criteron = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss()
     scaler = torch.amp.GradScaler()
 
     start_epoch = 0
@@ -84,7 +84,7 @@ def main() -> None:
         model.train()
         total_train_loss = torch.zeros((1,), device=device)
         for _ in tqdm(range(steps_per_epoch)):
-            data = next(val_loader)
+            data = next(train_loader)
             x = data[:, :-1]
             y = data[:, 1:].reshape(-1)
 
@@ -92,7 +92,7 @@ def main() -> None:
 
             with torch.autocast("cuda"):
                 pred_y = model(x).view(-1, n_vocab)
-                loss = criteron(pred_y, y)
+                loss = criterion(pred_y, y)
 
             scaler.scale(loss).backward()
             scaler.unscale_(opt)
@@ -114,7 +114,7 @@ def main() -> None:
                 y = data[:, 1:].reshape(-1)
                 with torch.autocast("cuda"):
                     pred_y = model(x).view(-1, n_vocab)
-                    loss = criteron(pred_y, y)
+                    loss = criterion(pred_y, y)
 
                 total_val_loss += loss
 

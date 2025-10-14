@@ -38,7 +38,9 @@ class WikiText103(Dataset):
 
         if not cache_path.exists():
             text = raw_path.read_text().replace("\n", "[SEP]").replace("<unk>", "[UNK]")
-            data = tokenizer.encode(text, return_tensors="pt").view(-1)
+            data = tokenizer.encode(
+                text, return_tensors="pt", add_special_tokens=False
+            ).view(-1)
             torch.save(data, cache_path)
         else:
             data = torch.load(cache_path)

@@ -13,7 +13,7 @@ class PositionalEncoding(nn.Module):
         num = torch.arange(seq_len, device=device).unsqueeze(1)
         div = torch.exp(
             torch.arange(0, d_model, 2, device=device)
-            * -torch.log(torch.tensor(10000.0 / d_model, device=device))
+            * -(torch.log(torch.tensor(10000.0, device=device)) / d_model)
         ).unsqueeze(0)
         self.enc[:, 0::2] = torch.sin(num * div)
         self.enc[:, 1::2] = torch.cos(num * div)
@@ -44,15 +44,15 @@ class Attention(nn.Module):
         )
         attn = torch.softmax(
             einops.einsum(Q, K, "b h tq dh, b h tk dh -> b h tq tk").div_(
-                self.d_model**0.5
+                self.d_head**0.5
             )
             + self.mask,
             dim=-1,
         )
         O = self.o(
             einops.rearrange(
-                einops.einsum(attn, V, "b h tq t, b h t dh -> b tq h dh"),
-                "b t h dh -> b t (h dh)",
+                einops.einsum(attn, V, "b h tq t, b h t dh -> b h tq dh"),
+                "b h t dh -> b t (h dh)",
             )
         )
         return O
