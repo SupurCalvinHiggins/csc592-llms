@@ -37,10 +37,15 @@ class WikiText103(Dataset):
         raw_path = path / f"wiki.{ext}.tokens"
 
         if not cache_path.exists():
-            text = raw_path.read_text().replace("\n", "[SEP]").replace("<unk>", "[UNK]")
-            data = tokenizer.encode(
-                text, return_tensors="pt", add_special_tokens=False
-            ).view(-1)
+            chunks = []
+            with raw_path.open("r") as f:
+                for line in f:
+                    line = line.replace("\n", "[SEP]").replace("<unk>", "[UNK]").strip()
+                    chunk = tokenizer.encode(
+                        line, return_tensors="pt", add_special_tokens=False
+                    ).view(-1)
+                    chunks.append(chunk)
+            data = torch.cat(chunks)
             torch.save(data, cache_path)
         else:
             data = torch.load(cache_path)
