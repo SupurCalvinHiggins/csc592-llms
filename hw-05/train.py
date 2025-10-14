@@ -2,8 +2,8 @@ import math
 from pathlib import Path
 
 import torch
-import torch.functional as F
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 from torch.optim import Adam
 from tqdm import tqdm
@@ -32,13 +32,13 @@ def generate(
     return out[0]
 
 
-TESTING = True
+TESTING = False
 
 
 def main() -> None:
     epochs = 2**10
     steps_per_epoch = 2**10 if not TESTING else 1
-    val_steps_per_epoch = steps_per_epoch // 8
+    val_steps_per_epoch = steps_per_epoch // 8 if not TESTING else 1
     seq_len = 256
     n_vocab = 28996
     batch_size = 16 if not TESTING else 1
@@ -60,7 +60,7 @@ def main() -> None:
     model = Transformer(
         d_model=512, n_heads=8, n_layers=8, seq_len=seq_len, n_vocab=n_vocab
     ).to(device)
-    model.compile("max-autotune")
+    model = torch.compile(model, mode="max-autotune")
 
     opt = Adam(model.parameters(), lr=3e-4)
     criteron = nn.CrossEntropyLoss()
@@ -98,8 +98,9 @@ def main() -> None:
             scaler.unscale_(opt)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(opt)
+            scaler.update()
 
-            total_train_loss += loss
+            total_train_loss += loss.detach()
 
         train_loss = total_train_loss.item() / steps_per_epoch
         print(f"Epoch [{epoch + 1}/{epochs}]: train_loss = {train_loss}")

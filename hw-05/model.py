@@ -9,7 +9,7 @@ device = torch.device("cuda")
 class PositionalEncoding(nn.Module):
     def __init__(self, seq_len: int, d_model: int) -> None:
         super().__init__()
-        self.enc = nn.Buffer(torch.zeros(d_model, seq_len, device=device))
+        self.enc = nn.Buffer(torch.zeros(seq_len, d_model, device=device))
         num = torch.arange(seq_len, device=device).unsqueeze(1)
         div = torch.exp(
             torch.arange(0, d_model, 2, device=device)
@@ -93,6 +93,7 @@ class Transformer(nn.Module):
         n_vocab: int,
         dropout: float = 0.1,
     ) -> None:
+        super().__init__()
         self.embed = nn.Embedding(n_vocab, d_model)
         self.pos = PositionalEncoding(seq_len, d_model)
         self.backbone = nn.Sequential(

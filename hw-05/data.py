@@ -38,9 +38,7 @@ class WikiText103(Dataset):
 
         if not cache_path.exists():
             text = raw_path.read_text().replace("\n", "[SEP]").replace("<unk>", "[UNK]")
-            print(ext, "OK")
-            data = tokenizer.encode(text, return_tensors="pt")
-            print(ext, "OK 2")
+            data = tokenizer.encode(text, return_tensors="pt").view(-1)
             torch.save(data, cache_path)
         else:
             data = torch.load(cache_path)
@@ -71,9 +69,15 @@ def get_loaders(
     )
     test_dataset = WikiText103.load(path, tokenizer, seq_len, WikiText103Split.TEST)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    train_loader = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True, collate_fn=lambda x: x
+    )
+    val_loader = DataLoader(
+        val_dataset, batch_size=batch_size, shuffle=False, collate_fn=lambda x: x
+    )
+    test_loader = DataLoader(
+        test_dataset, batch_size=batch_size, shuffle=False, collate_fn=lambda x: x
+    )
 
     return train_loader, val_loader, test_loader
 
