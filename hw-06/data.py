@@ -112,19 +112,26 @@ def get_poj104_loaders(
             ]
         )
         .to_pandas()
+        .dropna()
         .groupby("label")
         .apply(lambda x: x.sample(frac=1))
         .reset_index(drop=True)
     )
 
     train_dataset = (
-        dataset.groupby("label").apply(lambda x: x[:400]).reset_index(drop=True)
+        dataset.groupby("label")
+        .apply(lambda x: x[:400].sample(32))
+        .reset_index(drop=True)
     )
     val_dataset = (
-        dataset.groupby("label").apply(lambda x: x[400:450]).reset_index(drop=True)
+        dataset.groupby("label")
+        .apply(lambda x: x[400:450].sample(2))
+        .reset_index(drop=True)
     )
     test_dataset = (
-        dataset.groupby("label").apply(lambda x: x[450:]).reset_index(drop=True)
+        dataset.groupby("label")
+        .apply(lambda x: x[450:].sample(2))
+        .reset_index(drop=True)
     )
 
     train_input_ids, train_attention_mask = id_and_mask(
@@ -137,9 +144,15 @@ def get_poj104_loaders(
         list(test_dataset["code"]), tokenizer
     )
 
-    train_labels = torch.tensor(train_dataset["label"], dtype=torch.long)
-    val_labels = torch.tensor(val_dataset["label"], dtype=torch.long)
-    test_labels = torch.tensor(test_dataset["label"], dtype=torch.long)
+    train_labels = torch.tensor(
+        train_dataset["label"].apply(lambda x: int(x) - 1), dtype=torch.long
+    )
+    val_labels = torch.tensor(
+        val_dataset["label"].apply(lambda x: int(x) - 1), dtype=torch.long
+    )
+    test_labels = torch.tensor(
+        test_dataset["label"].apply(lambda x: int(x) - 1), dtype=torch.long
+    )
 
     train_dataset = CudaTensorDataset(
         train_input_ids, train_attention_mask, train_labels

@@ -26,12 +26,15 @@ def main(
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
+    name_to_num_classes = {"emotion": 6, "poj104": 104}
     name_to_loaders = {"emotion": get_emotion_loaders, "poj104": get_poj104_loaders}
     train_loader, val_loader, _ = name_to_loaders[dataset_name](
         tokenizer, batch_size=batch_size
     )
 
-    model = name_to_cls[model_name](6, freeze=freeze).to("cuda")
+    model = name_to_cls[model_name](
+        name_to_num_classes[dataset_name], freeze=freeze
+    ).to("cuda")
     # NOTE: `transformers` does not support AMP + compile.
     # if not debug:
     #    model.compile(mode="max-autotune")
@@ -83,9 +86,13 @@ def main(
     cm = confusion_matrix(val_labels, val_pred)
     print(cm)
 
-    target_names = ["sadness", "joy", "love", "anger", "fear", "surprise"]
-    cr = classification_report(val_labels, val_pred, target_names=target_names)
-    print(cr)
+    if dataset_name == "emotion":
+        target_names = ["sadness", "joy", "love", "anger", "fear", "surprise"]
+        cr = classification_report(val_labels, val_pred, target_names=target_names)
+        print(cr)
+    else:
+        cr = classification_report(val_labels, val_pred)
+        print(cr)
 
 
 if __name__ == "__main__":
