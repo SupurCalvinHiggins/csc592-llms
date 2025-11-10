@@ -114,23 +114,23 @@ def get_poj104_loaders(
         .to_pandas()
         .dropna()
         .groupby("label")
-        .apply(lambda x: x.sample(frac=1))
+        .apply(lambda x: x.sample(frac=1, random_state=0))
         .reset_index(drop=True)
     )
 
     train_dataset = (
         dataset.groupby("label")
-        .apply(lambda x: x[:400].sample(32))
+        .apply(lambda x: x[:400].sample(32, random_state=0))
         .reset_index(drop=True)
     )
     val_dataset = (
         dataset.groupby("label")
-        .apply(lambda x: x[400:450].sample(2))
+        .apply(lambda x: x[400:450].sample(2, random_state=0))
         .reset_index(drop=True)
     )
     test_dataset = (
         dataset.groupby("label")
-        .apply(lambda x: x[450:].sample(2))
+        .apply(lambda x: x[450:].sample(2, random_state=0))
         .reset_index(drop=True)
     )
 
