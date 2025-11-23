@@ -22,12 +22,15 @@ device = torch.device(device_type)
 @dataclass
 class Config:
     epochs: int = 128
-    steps_per_epoch: int = 1024
+    steps_per_epoch: int = 128  # 1024
     val_steps_per_epoch: int = 32
     generate_step_per_epoch: int = 128
     batch_size: int = 16
-    lr: float = 2e-4
+    lr: float = 4e-4
+    betas: tuple[float, float] = (0.9, 0.95)
     weight_decay: float = 0.1
+    start_factor: float = 1e-8
+    warmup: int = 4096
     seq_len: int = 128  # 1024
     d_model: int = 512
     num_heads: int = 8
@@ -67,7 +70,7 @@ def main(cfg: Config) -> None:
         seq_len=cfg.seq_len,
         lat_len=cfg.lat_len,
     ).to(device)
-    model.compile(mode="max-autotune")
+    # model.compile(mode="max-autotune")
 
     train_loader, val_loader, _ = get_loaders(
         Path("../datasets/wikitext-103/"), tokenizer, cfg.seq_len, cfg.batch_size
@@ -87,8 +90,20 @@ def main(cfg: Config) -> None:
             {"params": no_decay, "weight_decay": 0},
         ],
         lr=cfg.lr,
+        betas=cfg.betas,
         fused=True,
     )
+
+    warmup = optim.lr_scheduler.LinearLR(
+        opt, start_factor=cfg.start_factor, total_iters=cfg.warmup
+    )
+    cosine = optim.lr_scheduler.CosineAnnealingLR(
+        opt, T_max=cfg.epochs * cfg.steps_per_epoch
+    )
+    scheduler = optim.lr_scheduler.SequentialLR(
+        opt, schedulers=[warmup, cosine], milestones=[cfg.warmup]
+    )
+
     criteron = nn.CrossEntropyLoss()
 
     scaler = GradScaler()
@@ -116,6 +131,7 @@ def main(cfg: Config) -> None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(opt)
             scaler.update()
+            scheduler.step()
 
             total_train_loss += loss.detach()
 
@@ -128,7 +144,7 @@ def main(cfg: Config) -> None:
         with torch.no_grad():
             for _ in tqdm(range(cfg.val_steps_per_epoch)):
                 # xy is [b, t + 1]
-                xy = next(val_loader)
+                xy = next(train_loader)
                 # x is [b, t]
                 x = xy[:, :-1]
                 # y is [b * l]
@@ -145,14 +161,14 @@ def main(cfg: Config) -> None:
             print(f"Epoch [{epoch + 1}/{cfg.epochs}]: val_loss = {val_loss}")
             print(f"Epoch [{epoch + 1}/{cfg.epochs}]: perplexity = {perplexity}")
 
-            x = next(val_loader)[-1]
+            x = next(train_loader)[-1]
             out = generate(model, x, cfg.generate_step_per_epoch).cpu().tolist()
 
             print()
             print("INPUT".center(80, "*"))
-            print(tokenizer.decode(out[: cfg.seq_len + 1]))
+            print(tokenizer.decode(out[: cfg.seq_len]))
             print("OUTPUT".center(80, "*"))
-            print(tokenizer.decode(out[cfg.seq_len + 1 :]))
+            print(tokenizer.decode(out[cfg.seq_len :]))
             print("*" * 80)
             print()
 

@@ -18,7 +18,9 @@ class TransformerBlock(nn.Module):
         self.attn = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
         self.fc_norm = nn.LayerNorm(d_model)
         self.fc = nn.Sequential(
-            nn.Linear(d_model, 4 * d_model), nn.ReLU(), nn.Linear(4 * d_model, d_model)
+            nn.Linear(d_model, 4 * d_model),
+            nn.GELU(),
+            nn.Linear(4 * d_model, d_model),
         )
 
     def forward(self, x: Tensor) -> Tensor:

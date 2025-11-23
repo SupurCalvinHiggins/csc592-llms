@@ -63,8 +63,8 @@ class WikiText103(Dataset):
 
 
 def cycle(loader: DataLoader):
-    while True:
-        for x in loader:
+    for x in loader:
+        while True:
             yield x
 
 
