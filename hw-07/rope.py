@@ -19,8 +19,8 @@ class RoPE(nn.Module):
 
     def forward(self, x: Tensor, offset: int = 0) -> Tensor:
         seq_len = x.size(1)
-        sin = self.sin[offset : seq_len + offset, None, None, :]
-        cos = self.cos[offset : seq_len + offset, None, None, :]
+        sin = self.sin[None, offset : seq_len + offset, :]
+        cos = self.cos[None, offset : seq_len + offset, :]
         x1, x2 = x[..., ::2], x[..., 1::2]
         x = torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
         return x

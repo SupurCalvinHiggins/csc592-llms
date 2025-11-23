@@ -1,7 +1,6 @@
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 import torch
 import torch.nn as nn
@@ -16,25 +15,24 @@ from data import cycle, get_loaders
 from model import PerceiverAR
 
 device_type = "cuda"
+# device_type = "cpu"
 device = torch.device(device_type)
 
 
 @dataclass
 class Config:
-    epochs: int = 1_000
-    steps_per_epoch: int = 128
-    val_steps_per_epoch: int = 8
+    epochs: int = 128
+    steps_per_epoch: int = 1024
+    val_steps_per_epoch: int = 32
     generate_step_per_epoch: int = 128
-    batch_size: int = 4
+    batch_size: int = 16
     lr: float = 2e-4
     weight_decay: float = 0.1
-    validation_interval: int = 10_000
-    seq_len: int = 1024
+    seq_len: int = 128  # 1024
     d_model: int = 512
-    n_vocab: int = 28996
     num_heads: int = 8
     num_layers: int = 8
-    lat_len: int = 256
+    lat_len: int = 64  # 256
 
 
 def generate(
@@ -54,43 +52,32 @@ def generate(
     return out[0]
 
 
-def decode_token(token: int) -> str:
-    c = chr(token)
-    return c if c.isprintable() else ""
-
-
-def decode_tokens(tokens: Iterable[int]) -> str:
-    return "".join(map(decode_token, tokens))
-
-
 def main(cfg: Config) -> None:
     torch.set_float32_matmul_precision("high")
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        "gpt2", truncation=True, max_length=cfg.seq_len
+    )
 
     model = PerceiverAR(
         d_model=cfg.d_model,
         num_heads=cfg.num_heads,
         num_layers=cfg.num_layers,
-        n_vocab=cfg.n_vocab,
+        n_vocab=tokenizer.vocab_size,
         seq_len=cfg.seq_len,
         lat_len=cfg.lat_len,
     ).to(device)
     model.compile(mode="max-autotune")
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        "bert-base-cased", truncation=True, max_length=cfg.seq_len
-    )
     train_loader, val_loader, _ = get_loaders(
-        Path("../datasets/enwik8.gz"), tokenizer, cfg.seq_len, cfg.batch_size
+        Path("../datasets/wikitext-103/"), tokenizer, cfg.seq_len, cfg.batch_size
     )
     train_loader, val_loader = cycle(train_loader), cycle(val_loader)
 
     decay = []
     no_decay = []
     for param_name, param in model.named_parameters():
-        if param_name.endswith("bias") or (
-            param_name.endswith("weight")
-            and isinstance(param, (nn.LayerNorm, nn.Embedding))
-        ):
+        if param_name.endswith("bias") or "embed" in param_name or "norm" in param_name:
             no_decay.append(param)
         else:
             decay.append(param)
@@ -121,7 +108,7 @@ def main(cfg: Config) -> None:
 
             with torch.autocast(device_type=device_type, dtype=torch.float16):
                 # pred_y is [b * l, v]
-                pred_y = model(x).view(-1, cfg.n_vocab)
+                pred_y = model(x).view(-1, tokenizer.vocab_size)
                 loss = criteron(pred_y, y)
 
             scaler.scale(loss).backward()
@@ -141,33 +128,31 @@ def main(cfg: Config) -> None:
         with torch.no_grad():
             for _ in tqdm(range(cfg.val_steps_per_epoch)):
                 # xy is [b, t + 1]
-                xy = next(train_loader)
+                xy = next(val_loader)
                 # x is [b, t]
                 x = xy[:, :-1]
                 # y is [b * l]
                 y = xy[:, -cfg.lat_len :].reshape(-1)
                 with torch.autocast(device_type=device_type, dtype=torch.float16):
                     # pred_y is [b * l, v]
-                    pred_y = model(x).view(-1, cfg.n_vocab)
+                    pred_y = model(x).view(-1, tokenizer.vocab_size)
                     loss = criteron(pred_y, y)
                 total_val_loss += loss
 
             total_val_loss = total_val_loss.item()
             val_loss = total_val_loss / cfg.val_steps_per_epoch
             perplexity = math.exp(val_loss)
-            bpc = val_loss * math.log2(math.e)
             print(f"Epoch [{epoch + 1}/{cfg.epochs}]: val_loss = {val_loss}")
             print(f"Epoch [{epoch + 1}/{cfg.epochs}]: perplexity = {perplexity}")
-            print(f"Epoch [{epoch + 1}/{cfg.epochs}]: bpc = {bpc}")
 
             x = next(val_loader)[-1]
             out = generate(model, x, cfg.generate_step_per_epoch).cpu().tolist()
 
             print()
             print("INPUT".center(80, "*"))
-            print(decode_tokens(out[: cfg.seq_len + 1]))
+            print(tokenizer.decode(out[: cfg.seq_len + 1]))
             print("OUTPUT".center(80, "*"))
-            print(decode_tokens(out[cfg.seq_len + 1 :]))
+            print(tokenizer.decode(out[cfg.seq_len + 1 :]))
             print("*" * 80)
             print()
 

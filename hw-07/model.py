@@ -73,9 +73,8 @@ class PerceiverAR(nn.Module):
         x = self.embed(x)
         norm = self.attn_norm(x)
         k = v = self.rope(norm)
-        q = self.rope(norm[-self.lat_len :], offset=self.hst_len)
+        q = self.rope(norm[..., -self.lat_len :, :], offset=self.hst_len)
         attn_out, _ = self.attn(q, k, v, attn_mask=self.attn_mask)
-        x = x[-self.lat_len :] + attn_out
+        x = x[..., -self.lat_len :, :] + attn_out
         x = self.blocks(x)
         return self.fc(self.fc_norm(x))
-

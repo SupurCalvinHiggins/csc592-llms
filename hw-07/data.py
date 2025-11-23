@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer
 
 device = torch.device("cuda")
+# device = torch.device("cpu")
 
 
 class WikiText103Split(Enum):
@@ -58,7 +59,7 @@ class WikiText103(Dataset):
         return self.data[indices]
 
     def __len__(self) -> int:
-        return self.data.size(0) - self.seq_len + 1
+        return self.data.size(0) - self.seq_len - 1
 
 
 def cycle(loader: DataLoader):
@@ -90,9 +91,7 @@ def get_loaders(
 
 
 if __name__ == "__main__":
-    tokenizer = AutoTokenizer.from_pretrained(
-        "bert-base-cased", truncation=True, max_length=512
-    )
+    tokenizer = AutoTokenizer.from_pretrained("gpt2", truncation=True, max_length=512)
     dataset = WikiText103.load(
         Path("../datasets/wikitext-103/"), tokenizer, 256, WikiText103Split.TEST
     )
