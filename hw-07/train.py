@@ -1,108 +1,176 @@
+import math
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
+
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
-from sklearn.metrics import classification_report, confusion_matrix
+from torch import Tensor
 from torch.amp import GradScaler
-from transformers import AutoTokenizer, get_linear_schedule_with_warmup
+from tqdm import tqdm
+from transformers import AutoTokenizer
 
-from data import get_emotion_loaders, get_poj104_loaders
-from model import BertClassifier, DistilBertClassifier, RobertaClassifier
+from data import cycle, get_loaders
+from model import PerceiverAR
+
+device_type = "cuda"
+device = torch.device(device_type)
 
 
-def main(
-    model_name: str, dataset_name: str, freeze: bool = False, debug: bool = False
-) -> None:
-    torch.cuda.empty_cache()
+@dataclass
+class Config:
+    epochs: int = 1_000
+    steps_per_epoch: int = 128
+    val_steps_per_epoch: int = 8
+    generate_step_per_epoch: int = 128
+    batch_size: int = 4
+    lr: float = 2e-4
+    weight_decay: float = 0.1
+    validation_interval: int = 10_000
+    seq_len: int = 1024
+    d_model: int = 512
+    n_vocab: int = 28996
+    num_heads: int = 8
+    num_layers: int = 8
+    lat_len: int = 256
 
-    epochs = 15 if not debug else 1
-    batch_size = 16
-    learning_rate = 3e-6
 
-    name_to_cls = {
-        "bert-base-cased": BertClassifier,
-        "distilbert/distilbert-base-cased": DistilBertClassifier,
-        "FacebookAI/roberta-base": RobertaClassifier,
-    }
+def generate(
+    model: nn.Module,
+    tokens: Tensor,
+    count: int,
+    temperature: float = 1.0,
+) -> Tensor:
+    seq_len = tokens.size(0) - 1
+    out = torch.zeros((1, seq_len + count), dtype=torch.int, device=device)
+    out[:, :seq_len] = tokens[:seq_len]
+    for i in range(count):
+        logits = model(out[:, i : i + seq_len])[:, -1, :]
+        probs = F.softmax(logits / temperature, dim=-1)
+        token = torch.multinomial(probs, 1)
+        out[:, seq_len + i] = token
+    return out[0]
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    name_to_num_classes = {"emotion": 6, "poj104": 104}
-    name_to_loaders = {"emotion": get_emotion_loaders, "poj104": get_poj104_loaders}
-    train_loader, val_loader, _ = name_to_loaders[dataset_name](
-        tokenizer, batch_size=batch_size
+def decode_token(token: int) -> str:
+    c = chr(token)
+    return c if c.isprintable() else ""
+
+
+def decode_tokens(tokens: Iterable[int]) -> str:
+    return "".join(map(decode_token, tokens))
+
+
+def main(cfg: Config) -> None:
+    torch.set_float32_matmul_precision("high")
+
+    model = PerceiverAR(
+        d_model=cfg.d_model,
+        num_heads=cfg.num_heads,
+        num_layers=cfg.num_layers,
+        n_vocab=cfg.n_vocab,
+        seq_len=cfg.seq_len,
+        lat_len=cfg.lat_len,
+    ).to(device)
+    model.compile(mode="max-autotune")
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        "bert-base-cased", truncation=True, max_length=cfg.seq_len
     )
+    train_loader, val_loader, _ = get_loaders(
+        Path("../datasets/enwik8.gz"), tokenizer, cfg.seq_len, cfg.batch_size
+    )
+    train_loader, val_loader = cycle(train_loader), cycle(val_loader)
 
-    model = name_to_cls[model_name](
-        name_to_num_classes[dataset_name], freeze=freeze
-    ).to("cuda")
-    # NOTE: `transformers` does not support AMP + compile.
-    # if not debug:
-    #    model.compile(mode="max-autotune")
+    decay = []
+    no_decay = []
+    for param_name, param in model.named_parameters():
+        if param_name.endswith("bias") or (
+            param_name.endswith("weight")
+            and isinstance(param, (nn.LayerNorm, nn.Embedding))
+        ):
+            no_decay.append(param)
+        else:
+            decay.append(param)
+    opt = optim.Adam(
+        [
+            {"params": decay, "weight_decay": cfg.weight_decay},
+            {"params": no_decay, "weight_decay": 0},
+        ],
+        lr=cfg.lr,
+        fused=True,
+    )
+    criteron = nn.CrossEntropyLoss()
 
-    opt = optim.AdamW(model.parameters(), lr=learning_rate, fused=True)
-    # NOTE: `transformers` does not support AMP.
-    # opt = get_linear_schedule_with_warmup(opt, 0, epochs * len(train_loader))
-
-    criterion = nn.CrossEntropyLoss()
     scaler = GradScaler()
 
-    val_pred = torch.zeros(len(val_loader) * batch_size, dtype=torch.int, device="cuda")
-    val_labels = torch.zeros(
-        len(val_loader) * batch_size, dtype=torch.int, device="cuda"
-    )
+    for epoch in range(cfg.epochs):
+        model.train()
+        total_train_loss = torch.zeros((1,), device=device)
+        for _ in tqdm(range(cfg.steps_per_epoch)):
+            opt.zero_grad(set_to_none=True)
 
-    for epoch in range(epochs):
-        total_train_loss = torch.zeros((1,), device="cuda")
-        for input_ids, attention_mask, labels in train_loader:
-            with torch.autocast(device_type="cuda"):
-                output = model(input_ids=input_ids, attention_mask=attention_mask)
-                loss = criterion(output, labels)
-            total_train_loss += loss.detach()
+            # xy is [b, t + 1]
+            xy = next(train_loader)
+            # x is [b, t]
+            x = xy[:, :-1]
+            # y is [b * l]
+            y = xy[:, -cfg.lat_len :].reshape(-1)
+
+            with torch.autocast(device_type=device_type, dtype=torch.float16):
+                # pred_y is [b * l, v]
+                pred_y = model(x).view(-1, cfg.n_vocab)
+                loss = criteron(pred_y, y)
+
             scaler.scale(loss).backward()
-
             scaler.unscale_(opt)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-
             scaler.step(opt)
             scaler.update()
 
-        train_loss = (total_train_loss / len(train_loader)).item()
-        print(f"Epoch [{epoch + 1}/{epochs}]: train_loss = {train_loss}")
+            total_train_loss += loss.detach()
 
+        total_train_loss = total_train_loss.item()
+        train_loss = total_train_loss / cfg.steps_per_epoch
+        print(f"Epoch [{epoch + 1}/{cfg.epochs}]: train_loss = {train_loss}")
+
+        model.eval()
+        total_val_loss = torch.zeros((1,), device=device)
         with torch.no_grad():
-            total_val_loss = torch.zeros((1,), device="cuda")
-            for i, (input_ids, attention_mask, labels) in enumerate(val_loader):
-                with torch.autocast(device_type="cuda"):
-                    output = model(input_ids=input_ids, attention_mask=attention_mask)
-                    loss = criterion(output, labels)
+            for _ in tqdm(range(cfg.val_steps_per_epoch)):
+                # xy is [b, t + 1]
+                xy = next(train_loader)
+                # x is [b, t]
+                x = xy[:, :-1]
+                # y is [b * l]
+                y = xy[:, -cfg.lat_len :].reshape(-1)
+                with torch.autocast(device_type=device_type, dtype=torch.float16):
+                    # pred_y is [b * l, v]
+                    pred_y = model(x).view(-1, cfg.n_vocab)
+                    loss = criteron(pred_y, y)
                 total_val_loss += loss
-                val_pred[i * batch_size : (i + 1) * batch_size] = output.argmax(dim=-1)
-                val_labels[i * batch_size : (i + 1) * batch_size] = labels
 
-            val_loss = (total_val_loss / len(val_loader)).item()
-            print(f"Epoch [{epoch + 1}/{epochs}]: val_loss = {val_loss}")
+            total_val_loss = total_val_loss.item()
+            val_loss = total_val_loss / cfg.val_steps_per_epoch
+            perplexity = math.exp(val_loss)
+            bpc = val_loss * math.log2(math.e)
+            print(f"Epoch [{epoch + 1}/{cfg.epochs}]: val_loss = {val_loss}")
+            print(f"Epoch [{epoch + 1}/{cfg.epochs}]: perplexity = {perplexity}")
+            print(f"Epoch [{epoch + 1}/{cfg.epochs}]: bpc = {bpc}")
 
-    val_pred, val_labels = val_pred.cpu(), val_labels.cpu()
-    cm = confusion_matrix(val_labels, val_pred)
-    print(cm)
+            x = next(val_loader)[-1]
+            out = generate(model, x, cfg.generate_step_per_epoch).cpu().tolist()
 
-    if dataset_name == "emotion":
-        target_names = ["sadness", "joy", "love", "anger", "fear", "surprise"]
-        cr = classification_report(val_labels, val_pred, target_names=target_names)
-        print(cr)
-    else:
-        cr = classification_report(val_labels, val_pred)
-        print(cr)
+            print()
+            print("INPUT".center(80, "*"))
+            print(decode_tokens(out[: cfg.seq_len + 1]))
+            print("OUTPUT".center(80, "*"))
+            print(decode_tokens(out[cfg.seq_len + 1 :]))
+            print("*" * 80)
+            print()
 
 
 if __name__ == "__main__":
-    # emotion
-    # main("bert-base-cased", "emotion", freeze=False)
-    # main("bert-base-cased", "emotion", freeze=True)
-    # main("distilbert/distilbert-base-cased", "emotion", freeze=False)
-    # main("FacebookAI/roberta-base", "emotion", freeze=False)
-    # poj104
-    main("bert-base-cased", "poj104", freeze=False)
-    main("bert-base-cased", "poj104", freeze=True)
-    main("distilbert/distilbert-base-cased", "poj104", freeze=False)
-    main("FacebookAI/roberta-base", "poj104", freeze=False)
+    main(Config())
