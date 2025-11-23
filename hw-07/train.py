@@ -70,7 +70,7 @@ def main(cfg: Config) -> None:
         seq_len=cfg.seq_len,
         lat_len=cfg.lat_len,
     ).to(device)
-    # model.compile(mode="max-autotune")
+    model.compile(mode="max-autotune")
 
     train_loader, val_loader, _ = get_loaders(
         Path("../datasets/wikitext-103/"), tokenizer, cfg.seq_len, cfg.batch_size
@@ -144,7 +144,7 @@ def main(cfg: Config) -> None:
         with torch.no_grad():
             for _ in tqdm(range(cfg.val_steps_per_epoch)):
                 # xy is [b, t + 1]
-                xy = next(train_loader)
+                xy = next(val_loader)
                 # x is [b, t]
                 x = xy[:, :-1]
                 # y is [b * l]
@@ -161,7 +161,7 @@ def main(cfg: Config) -> None:
             print(f"Epoch [{epoch + 1}/{cfg.epochs}]: val_loss = {val_loss}")
             print(f"Epoch [{epoch + 1}/{cfg.epochs}]: perplexity = {perplexity}")
 
-            x = next(train_loader)[-1]
+            x = next(val_loader)[-1]
             out = generate(model, x, cfg.generate_step_per_epoch).cpu().tolist()
 
             print()
