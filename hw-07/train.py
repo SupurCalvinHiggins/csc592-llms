@@ -22,20 +22,21 @@ device = torch.device(device_type)
 @dataclass
 class Config:
     epochs: int = 128
-    steps_per_epoch: int = 128  # 1024
+    steps_per_epoch: int = 1024
+    grads_per_step: int = 8
     val_steps_per_epoch: int = 32
     generate_step_per_epoch: int = 128
-    batch_size: int = 16
+    batch_size: int = 32
     lr: float = 4e-4
     betas: tuple[float, float] = (0.9, 0.95)
     weight_decay: float = 0.1
     start_factor: float = 1e-8
     warmup: int = 4096
-    seq_len: int = 128  # 1024
+    seq_len: int = 1024
     d_model: int = 512
     num_heads: int = 8
     num_layers: int = 8
-    lat_len: int = 64  # 256
+    lat_len: int = 256
 
 
 def generate(
@@ -114,26 +115,27 @@ def main(cfg: Config) -> None:
         for _ in tqdm(range(cfg.steps_per_epoch)):
             opt.zero_grad(set_to_none=True)
 
-            # xy is [b, t + 1]
-            xy = next(train_loader)
-            # x is [b, t]
-            x = xy[:, :-1]
-            # y is [b * l]
-            y = xy[:, -cfg.lat_len :].reshape(-1)
+            for _ in range(cfg.grads_per_step):
+                # xy is [b, t + 1]
+                xy = next(train_loader)
+                # x is [b, t]
+                x = xy[:, :-1]
+                # y is [b * l]
+                y = xy[:, -cfg.lat_len :].reshape(-1)
 
-            with torch.autocast(device_type=device_type, dtype=torch.float16):
-                # pred_y is [b * l, v]
-                pred_y = model(x).view(-1, tokenizer.vocab_size)
-                loss = criteron(pred_y, y)
+                with torch.autocast(device_type=device_type, dtype=torch.float16):
+                    # pred_y is [b * l, v]
+                    pred_y = model(x).view(-1, tokenizer.vocab_size)
+                    loss = criteron(pred_y, y) / cfg.grads_per_step
 
-            scaler.scale(loss).backward()
+                scaler.scale(loss).backward()
+                total_train_loss += loss.detach()
+
             scaler.unscale_(opt)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(opt)
             scaler.update()
             scheduler.step()
-
-            total_train_loss += loss.detach()
 
         total_train_loss = total_train_loss.item()
         train_loss = total_train_loss / cfg.steps_per_epoch
