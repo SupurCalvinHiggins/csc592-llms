@@ -21,12 +21,12 @@ device = torch.device(device_type)
 
 @dataclass
 class Config:
-    epochs: int = 128
-    steps_per_epoch: int = 1024
-    grads_per_step: int = 8
+    epochs: int = 1024
+    steps_per_epoch: int = 128
+    grads_per_step: int = 16
     val_steps_per_epoch: int = 32
     generate_step_per_epoch: int = 128
-    batch_size: int = 32
+    batch_size: int = 16
     lr: float = 4e-4
     betas: tuple[float, float] = (0.9, 0.95)
     weight_decay: float = 0.1
@@ -71,7 +71,7 @@ def main(cfg: Config) -> None:
         seq_len=cfg.seq_len,
         lat_len=cfg.lat_len,
     ).to(device)
-    model.compile(mode="max-autotune")
+    model.compile(mode="max-autotune-no-cudagraphs")
 
     train_loader, val_loader, _ = get_loaders(
         Path("../datasets/wikitext-103/"), tokenizer, cfg.seq_len, cfg.batch_size
