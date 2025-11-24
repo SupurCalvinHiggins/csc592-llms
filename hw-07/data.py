@@ -9,7 +9,6 @@ from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer
 
 device = torch.device("cuda")
-# device = torch.device("cpu")
 
 
 class WikiText103Split(Enum):

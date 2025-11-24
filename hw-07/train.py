@@ -15,7 +15,6 @@ from data import cycle, get_loaders
 from model import PerceiverAR
 
 device_type = "cuda"
-# device_type = "cpu"
 device = torch.device(device_type)
 
 
@@ -27,15 +26,15 @@ class Config:
     val_steps_per_epoch: int = 32
     generate_step_per_epoch: int = 128
     batch_size: int = 16
-    lr: float = 4e-4
+    lr: float = 5e-3
     betas: tuple[float, float] = (0.9, 0.95)
-    weight_decay: float = 0.1
+    weight_decay: float = 0.01
     start_factor: float = 1e-8
     warmup: int = 4096
     seq_len: int = 1024
     d_model: int = 512
     num_heads: int = 8
-    num_layers: int = 8
+    num_layers: int = 12
     lat_len: int = 256
 
 

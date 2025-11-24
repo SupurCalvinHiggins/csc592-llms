@@ -6,19 +6,20 @@ from torch import Tensor
 
 
 class PositionalEncoding(nn.Module):
-
     def __init__(self, seq_len: int, d_model: int) -> None:
         super().__init__()
         pe = torch.zeros(seq_len, d_model)
         position = torch.arange(0, seq_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2, dtype=torch.float) * (-math.log(10000.0) / d_model))
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2, dtype=torch.float)
+            * (-math.log(10000.0) / d_model)
+        )
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         self.register_buffer("pe", pe.unsqueeze(0))
 
     def forward(self, x: Tensor) -> Tensor:
-        print(x.shape, self.pe.shape)
-        x = x + self.pe[:, :x.size(0), :]
+        x = x + self.pe
         return x
 
 
@@ -41,7 +42,7 @@ class TransformerBlock(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         q = k = v = self.attn_norm(x)
-        attn_out, _ = self.attn(q, k, v, attn_mask=self.attn_mask)
+        attn_out, _ = self.attn(q, k, v, attn_mask=self.attn_mask, need_weights=False)
         x = x + attn_out
         x = x + self.fc(self.fc_norm(x))
         return x
@@ -79,10 +80,7 @@ class PerceiverAR(nn.Module):
         )
         self.attn = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
         self.blocks = nn.Sequential(
-            *(
-                TransformerBlock(lat_len, d_model, num_heads)
-                for _ in range(num_layers)
-            )
+            *(TransformerBlock(lat_len, d_model, num_heads) for _ in range(num_layers))
         )
         self.fc_norm = nn.LayerNorm(d_model)
         self.fc = nn.Linear(d_model, n_vocab)
@@ -92,7 +90,7 @@ class PerceiverAR(nn.Module):
         norm = self.attn_norm(x)
         k = v = norm
         q = norm[..., -self.lat_len :, :]
-        attn_out, _ = self.attn(q, k, v, attn_mask=self.attn_mask)
+        attn_out, _ = self.attn(q, k, v, attn_mask=self.attn_mask, need_weights=False)
         x = x[..., -self.lat_len :, :] + attn_out
         x = self.blocks(x)
         return self.fc(self.fc_norm(x))
