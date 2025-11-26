@@ -32,15 +32,10 @@ class Config:
     start_factor: float = 1e-8
     warmup: int = 4096
     seq_len: int = 1024
-    d_model: int = 768
+    d_model: int = 512
     num_heads: int = 8
     num_layers: int = 12
     lat_len: int = 256
-
-# 1. lat len = 128
-# 2. lat len = 384
-# 3. d_model = 256
-# 4. d_model = 768
 
 
 def generate(
